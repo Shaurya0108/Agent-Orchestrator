@@ -1,10 +1,37 @@
 from pathlib import Path
 from typing import Dict, Optional
+import openai
+from os import getenv
+import os
 
 class RepositoryAgent:
     def __init__(self, repository_path: Path):
         self.repository_path = repository_path
         self.analysis_results = {}
+        openai.api_key = getenv("OPENAI_API_KEY")
+
+    def read_repository_contents(self) -> str:
+        """Read all relevant code files from the repository."""
+        code_contents = []
+        # File extensions to read
+        code_extensions = {'.py', '.js', '.java', '.cpp', '.h', '.cs', '.php', '.rb', '.go', '.rs', 
+                         '.ts', '.html', '.css', '.sql', '.md', '.json', '.yaml', '.yml'}
+        
+        for file_path in self.repository_path.rglob("*"):
+            if file_path.is_file() and file_path.suffix in code_extensions:
+                # Skip virtual environments and node_modules
+                if any(part in str(file_path) for part in ['venv', 'node_modules', '__pycache__', '.git']):
+                    continue
+                
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as file:
+                        relative_path = file_path.relative_to(self.repository_path)
+                        code_contents.append(f"\n--- {relative_path} ---\n")
+                        code_contents.append(file.read())
+                except Exception as e:
+                    code_contents.append(f"\nError reading {file_path}: {str(e)}\n")
+        
+        return "\n".join(code_contents)
 
     def analyze_repository(self) -> Dict:
         """
@@ -43,6 +70,37 @@ class RepositoryAgent:
                 "message": f"Error analyzing repository: {str(e)}"
             }
 
+    async def process_prompt(self, prompt: str) -> Dict:
+        """Process a user prompt about the repository using GPT."""
+        try:
+            # Read repository contents
+            code_contents = self.read_repository_contents()
+            
+            # Prepare the message for GPT
+            messages = [
+                {"role": "system", "content": "You are a helpful AI assistant that analyzes code repositories and answers questions about them. Provide clear, concise answers and include relevant code snippets when appropriate."},
+                {"role": "user", "content": f"Here is the repository content:\n\n{code_contents}\n\nUser question: {prompt}"}
+            ]
+            
+            # Call GPT
+            response = await openai.ChatCompletion.acreate(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                temperature=0.7,
+                max_tokens=1500
+            )
+            
+            return {
+                "status": "success",
+                "response": response.choices[0].message.content
+            }
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Error processing prompt: {str(e)}"
+            }
+
 class AgentOrchestrator:
     def __init__(self):
         self.uploads_dir = Path("uploads")
@@ -58,22 +116,14 @@ class AgentOrchestrator:
         repo_path = self.uploads_dir / repository_name
         return repo_path if repo_path.exists() else None
 
-    def analyze_repository(self, repository_name: str) -> Dict:
-        """
-        Analyze a specific repository using the RepositoryAgent.
-
-        Args:
-            repository_name (str): Name of the repository to analyze
-
-        Returns:
-            Dict: Analysis results or error message
-        """
+    async def process_repository_prompt(self, repository_name: str, prompt: str) -> Dict:
+        """Process a prompt for a specific repository."""
         repo_path = self.get_repository_path(repository_name)
         if not repo_path:
             return {
                 "status": "error",
                 "message": f"Repository '{repository_name}' not found"
             }
-
+        
         agent = RepositoryAgent(repo_path)
-        return agent.analyze_repository()
+        return await agent.process_prompt(prompt)
