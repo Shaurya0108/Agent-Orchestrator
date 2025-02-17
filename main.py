@@ -30,26 +30,22 @@ async def upload_repository(file: UploadFile = File(...)):
         # Create a temporary file to store the upload
         with open(f"temp_{file.filename}", "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
-        # Create an 'uploads' directory if it doesn't exist
+
         upload_dir = Path("uploads")
         upload_dir.mkdir(exist_ok=True)
-        
+
         # Extract the zip file
         with zipfile.ZipFile(f"temp_{file.filename}", "r") as zip_ref:
-            # Extract to a directory named after the zip file (without .zip extension)
             extract_dir = upload_dir / Path(file.filename).stem
             zip_ref.extractall(extract_dir)
-        
+
         # Clean up the temporary file
         os.remove(f"temp_{file.filename}")
-        
         return {
             "status": "success",
             "message": f"Repository uploaded and extracted to {extract_dir}",
             "filename": file.filename
         }
-    
     except Exception as e:
         return {
             "status": "error",
