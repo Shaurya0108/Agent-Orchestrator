@@ -6,6 +6,8 @@ Trying a new approach to structuring agents for LLM tools. This is using an init
 
 ## How to use
 
+make .env file and add OPENAI_API_KEY
+
 ```bash
 pip install -r requirements.txt
 python main.py
