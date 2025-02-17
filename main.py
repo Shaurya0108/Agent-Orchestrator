@@ -2,7 +2,6 @@ import fastapi
 import uvicorn
 from dotenv import load_dotenv
 import os
-from utils import ThreadWithExc
 from fastapi import UploadFile, File
 import shutil
 import zipfile
