@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from os import getenv
 import logging
 import openai
-from agents.agent import BaseAgent
+from agents.base_agent import BaseAgent
 
 load_dotenv()
 

@@ -5,20 +5,12 @@ from os import getenv
 import os
 import logging
 import json
+import shutil
 from agents.agent_selector import AgentSelector
-
+from agents.base_agent import BaseAgent
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
-class BaseAgent:
-    """Base class for all agents"""
-    def __init__(self, name: str):
-        self.name = name
-
-    async def process(self, context: Dict) -> Dict:
-        """Process method to be implemented by specific agents"""
-        raise NotImplementedError
 
 class RepositoryAnalysisAgent(BaseAgent):
     def __init__(self, repository_path: Path):
@@ -210,6 +202,15 @@ class AgentController:
         """Get the path to a specific repository."""
         repo_path = self.uploads_dir / repository_name
         return repo_path if repo_path.exists() else None
+    
+    def delete_repository(self, repository_name: str):
+        """Delete a specific repository."""
+        repo_path = self.uploads_dir / repository_name
+        if repo_path.exists():
+            shutil.rmtree(repo_path)
+            logger.debug(f"Repository '{repository_name}' deleted")
+        else:
+            logger.error(f"Repository '{repository_name}' not found")
 
     async def process_repository_prompt(self, repository_name: str, prompt: str = None) -> Dict:
         """Orchestrate multiple agents to process a repository and optional prompt."""
