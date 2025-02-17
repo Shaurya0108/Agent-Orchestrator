@@ -6,7 +6,7 @@ from fastapi import UploadFile, File, HTTPException
 import shutil
 import zipfile
 from pathlib import Path
-from agents.agent import AgentOrchestrator
+from agents.agent import AgentController
 
 load_dotenv()
 
@@ -65,24 +65,19 @@ async def run_agent(repository_name: str = None, prompt: str = None):
     Returns:
         dict: Analysis results, repository list, or AI response
     """
-    orchestrator = AgentOrchestrator()
+    controller = AgentController()
     
     # If no repository specified, return list of available repositories
     if not repository_name:
-        repositories = orchestrator.list_repositories()
+        repositories = controller.list_repositories()
         return {
             "status": "success",
             "available_repositories": repositories,
             "message": "Specify a repository_name query parameter to analyze a specific repository"
         }
     
-    # If prompt is provided, process it with GPT
-    if prompt:
-        result = await orchestrator.process_repository_prompt(repository_name, prompt)
-    else:
-        # Otherwise, run basic analysis
-        result = orchestrator.analyze_repository(repository_name)
-    
+    # Process repository with optional prompt
+    result = await controller.process_repository_prompt(repository_name, prompt)
     if result["status"] == "error":
         raise HTTPException(status_code=404, detail=result["message"])
     
