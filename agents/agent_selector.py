@@ -58,24 +58,25 @@ User Prompt: "{prompt}"
 Available Agents:
 {json.dumps(self.available_agents, indent=2)}
 
-Consider that:
-The Planner Agent is required for:
-- Any code modifications or additions
-- Complex code analysis
-- Architectural changes
-- Code improvements
-- Feature additions
+Consider these STRICT rules for agent selection:
+1. The Repository Analysis Agent is ALWAYS required first as a baseline
+2. The Code Reader Agent is ALWAYS required when we need to analyze or modify code
+3. The Planner Agent is REQUIRED for ANY of these cases:
+   - Adding new code or endpoints
+   - Modifying existing code
+   - Making any code changes
+   - Adding new features
+   - Code improvements
+   - Architectural changes
+4. The GPT Agent is ALWAYS required last when we need to provide a response
 
-1. The Repository Analysis Agent is always required as a baseline
-2. Not all agents are needed for every query
-3. The Planner Agent is most useful for complex code analysis, improvements, or architectural questions
-4. Simple questions about repository purpose or structure may not need the Planner
-5. The Code Reader is needed whenever we need to analyze actual code content
-6. The GPT Agent is needed whenever we need to provide a response to the user's prompt
+For prompts requesting code changes (like "add endpoint", "create function", "implement feature"):
+- MUST include Planner Agent
+- Order should be: repository_analysis -> code_reader -> planner -> gpt
 
-Please provide:
+Provide:
 1. List of required agents in order of execution
-2. Brief justification for each agent's inclusion or exclusion
+2. Brief justification for each agent's inclusion
 
 Respond in JSON format with 'selected_agents' (array of agent keys in order) and 'justification' (string).
 """
@@ -92,7 +93,7 @@ Respond in JSON format with 'selected_agents' (array of agent keys in order) and
 
             # Parse the response
             selection_result = json.loads(response.choices[0].message.content)
-            logger.debug(f"{self.name}: Selected agents: {selection_result['selected_agents']}")
+            # logger.debug(f"{self.name}: Selected agents: {selection_result['selected_agents']}")
 
             return {
                 "status": "success",

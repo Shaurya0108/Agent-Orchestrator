@@ -8,6 +8,8 @@ import json
 import shutil
 from agents.agent_selector import AgentSelector
 from agents.base_agent import BaseAgent
+from agents.tools.code_change import CodeChangeHandler
+
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -19,7 +21,6 @@ class RepositoryAnalysisAgent(BaseAgent):
         self.analysis_results = {}
 
     async def process(self, context: Dict) -> Dict:
-        logger.debug(f"{self.name}: Starting repository analysis")
         try:
             files = list(self.repository_path.rglob("*"))
             stats = {
@@ -48,8 +49,7 @@ class CodeReaderAgent(BaseAgent):
     async def process(self, context: Dict) -> Dict:
         logger.debug(f"{self.name}: Starting code reading")
         code_contents = []
-        code_extensions = {'.py', '.js', '.java', '.cpp', '.h', '.cs', '.php', '.rb', '.go', '.rs', 
-                         '.ts', '.html', '.css', '.sql', '.md', '.json', '.yaml', '.yml'}
+        code_extensions = {'.py', '.js', '.java', '.cpp', '.h', '.cs', '.php', '.rb', '.go', '.rs', '.ts', '.html', '.css', '.sql', '.md', '.json', '.yaml', '.yml'}
 
         try:
             for file_path in self.repository_path.rglob("*"):
@@ -57,7 +57,7 @@ class CodeReaderAgent(BaseAgent):
                     if any(part in str(file_path) for part in ['venv', 'node_modules', '__pycache__', '.git']):
                         continue
 
-                    logger.debug(f"{self.name}: Reading file {file_path.relative_to(self.repository_path)}")
+                    # logger.debug(f"{self.name}: Reading file {file_path.relative_to(self.repository_path)}")
                     try:
                         with open(file_path, 'r', encoding='utf-8') as file:
                             relative_path = file_path.relative_to(self.repository_path)
@@ -129,9 +129,14 @@ Provide the plan in a clear, structured format.
             return {"status": "error", "message": str(e)}
 
 class GPTAgent(BaseAgent):
-    def __init__(self):
+    def __init__(self, repository_path: Optional[Path] = None):
         super().__init__("GPT Agent")
         openai.api_key = getenv("OPENAI_API_KEY")
+        self.repository_path = repository_path
+        logger.debug(f"{self.name}: Initialized with repository path: {repository_path}")
+        self.code_handler = CodeChangeHandler(repository_path) if repository_path else None
+        if not self.code_handler:
+            logger.warning(f"{self.name}: No CodeChangeHandler initialized - code changes will not be applied")
 
     async def process(self, context: Dict) -> Dict:
         logger.debug(f"{self.name}: Starting GPT processing")
@@ -140,41 +145,115 @@ class GPTAgent(BaseAgent):
             prompt = context.get("prompt", "")
             plan = context.get("plan", "")
 
-            # Enhanced system message with plan integration
-            system_message = """You are a helpful AI assistant that analyzes code repositories and answers questions about them. 
-Follow the provided analysis plan carefully and structure your response accordingly.
-Include relevant code snippets when appropriate and explain your findings clearly."""
+            logger.info(f"{self.name}: Processing prompt: {prompt}")
+            logger.info(f"{self.name}: Using plan: {plan}")
+
+            # Enhanced system message for code modifications
+            system_message = """You are a helpful AI assistant that implements code changes in repositories.
+Your task is to modify or create files to implement the requested changes.
+
+When implementing code changes:
+1. First identify which files need to be modified or created
+2. For each file that needs changes:
+   - If modifying an existing file, keep all existing functionality
+   - If creating a new file, ensure it follows the project's patterns
+3. You MUST return a JSON object with:
+   - 'explanation': Detailed explanation of what changes you're making and why
+   - 'changes': Dictionary where:
+     - Keys are file paths relative to repository root
+     - Values are the COMPLETE new content of those files
+4. For any new endpoints:
+   - Include proper error handling
+   - Follow the project's existing patterns
+   - Ensure all imports are correct
+5. Include ALL necessary code - don't use placeholder comments
+
+Example response format:
+{
+    "explanation": "Adding a new hello world endpoint to main.py",
+    "changes": {
+        "main.py": "complete updated file content here..."
+    }
+}"""
 
             messages = [
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": f"""
-Analysis Plan:
-{plan}
-
 Repository Content:
 {code_contents}
 
-User Question: {prompt}
+Implementation Request: {prompt}
 
-Please provide a structured analysis following the plan above."""}
+You MUST return a valid JSON object with 'explanation' and 'changes' fields as shown in the system message.
+For any file you modify, you must include its complete content in the response."""}
             ]
 
             logger.debug(f"{self.name}: Sending request to OpenAI")
             response = await openai.ChatCompletion.acreate(
-                model="gpt-3.5-turbo",
+                model="gpt-4",
                 messages=messages,
-                temperature=0.7,
-                max_tokens=1500
+                temperature=0.2,
+                max_tokens=2000
             )
 
-            logger.debug(f"{self.name}: Received response from OpenAI")
-            return {
-                "status": "success",
-                "response": response.choices[0].message.content
-            }
+            response_content = response.choices[0].message.content.strip()
+            logger.debug(f"{self.name}: Received response from OpenAI: {response_content[:200]}...")
+            
+            try:
+                # Try to parse response as JSON
+                response_data = json.loads(response_content)
+                
+                # Validate response format
+                if not isinstance(response_data, dict) or "changes" not in response_data or "explanation" not in response_data:
+                    logger.error(f"{self.name}: Invalid response format - missing required fields")
+                    raise ValueError("Response missing required fields")
+                
+                logger.info(f"{self.name}: Planning to modify files: {list(response_data['changes'].keys())}")
+                logger.info(f"{self.name}: Change explanation: {response_data['explanation']}")
+                
+                # If we have changes and a repository path, apply them
+                if response_data["changes"] and self.code_handler:
+                    logger.info(f"{self.name}: Applying code changes to {len(response_data['changes'])} files")
+                    change_results = self.code_handler.apply_changes(response_data["changes"])
+                    
+                    logger.info(f"{self.name}: Change results: {json.dumps(change_results, indent=2)}")
+                    
+                    # Add diff summary to response
+                    if change_results["patches"]:
+                        response_data["diff_summary"] = self.code_handler.get_diff_summary(
+                            change_results["patches"]
+                        )
+                        logger.debug(f"{self.name}: Generated diff summary")
+                    
+                    response_data.update({
+                        "change_results": change_results
+                    })
+                else:
+                    logger.warning(f"{self.name}: No changes to apply or no code handler available")
+                
+                return {
+                    "status": "success",
+                    "response": response_data
+                }
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"{self.name}: Failed to parse GPT response as JSON: {str(e)}")
+                logger.error(f"{self.name}: Raw response: {response_content}")
+                return {
+                    "status": "error",
+                    "message": "GPT response was not valid JSON"
+                }
+            except ValueError as e:
+                logger.error(f"{self.name}: Invalid response format: {str(e)}")
+                return {
+                    "status": "error",
+                    "message": str(e)
+                }
+                
         except Exception as e:
             logger.error(f"{self.name}: Error during GPT processing - {str(e)}")
             return {"status": "error", "message": str(e)}
+
 class AgentController:
     """Controls and orchestrates multiple agents"""
     def __init__(self):

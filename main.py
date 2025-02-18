@@ -7,6 +7,8 @@ import shutil
 import zipfile
 from pathlib import Path
 from agents.agent import AgentController
+from agents.tools.code_change import CodeChangeHandler
+from typing import List
 
 load_dotenv()
 
@@ -86,6 +88,86 @@ async def run_agent(repository_name: str = None, prompt: str = None):
     result = await controller.process_repository_prompt(repository_name, prompt)
     if result["status"] == "error":
         raise HTTPException(status_code=404, detail=result["message"])
+
+    return result
+
+@app.post("/apply_changes")
+async def apply_changes(repository_name: str, prompt: str):
+    """
+    Apply code changes to a repository based on the prompt.
+
+    Args:
+        repository_name (str): Name of the repository to modify
+        prompt (str): Description of changes to make
+
+    Returns:
+        dict: Results of the modification attempt
+    """
+    controller = AgentController()
+
+    # Verify repository exists
+    repo_path = controller.get_repository_path(repository_name)
+    if not repo_path:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Repository '{repository_name}' not found"
+        )
+
+    # Process repository with prompt
+    result = await controller.process_repository_prompt(repository_name, prompt)
+
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+
+    # If changes were made, return the change results
+    if "gpt_response" in result and isinstance(result["gpt_response"], dict):
+        response = result["gpt_response"]
+        if "change_results" in response:
+            return {
+                "status": "success",
+                "changes": response["change_results"],
+                "explanation": response.get("explanation", ""),
+                "diff_summary": response.get("diff_summary", "")
+            }
+
+    return {
+        "status": "error",
+        "message": "No code changes were generated from the prompt"
+    }
+
+@app.post("/revert_changes")
+async def revert_changes(repository_name: str, file_paths: List[str]):
+    """
+    Revert changes made to specified files in a repository.
+
+    Args:
+        repository_name (str): Name of the repository
+        file_paths (List[str]): List of file paths to revert
+
+    Returns:
+        dict: Results of the reversion attempt
+    """
+    controller = AgentController()
+
+    # Verify repository exists
+    repo_path = controller.get_repository_path(repository_name)
+    if not repo_path:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Repository '{repository_name}' not found"
+        )
+
+    # Create code handler
+    code_handler = CodeChangeHandler(repo_path)
+
+    # Attempt to revert changes
+    result = code_handler.revert_changes(file_paths)
+
+    if result["status"] == "error":
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Error reverting changes", "errors": result["errors"]}
+        )
 
     return result
 
